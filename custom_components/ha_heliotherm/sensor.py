@@ -5,7 +5,6 @@ from homeassistant.components.input_number import *
 import logging
 from typing import Optional, Dict, Any
 
-
 import homeassistant.util.dt as dt_util
 
 from .const import (
@@ -57,6 +56,10 @@ class HaHeliothermModbusSensor(SensorEntity):
         self._attr_device_info = device_info
         self._hub = hub
         self.entity_description: HaHeliothermSensorEntityDescription = description
+        
+# --- START CHANGE: Variable für COP Logik ---
+        self._last_valid_cop = None
+# --- END CHANGE ---
 
     async def async_added_to_hass(self):
         """Register callbacks."""
@@ -81,8 +84,23 @@ class HaHeliothermModbusSensor(SensorEntity):
     @property
     def native_value(self):
         """Return the state of the sensor."""
-        return (
+        val = (
             self._hub.data[self.entity_description.key]
             if self.entity_description.key in self._hub.data
             else None
         )
+
+# --- START CHANGE: COP einfrieren bei Abtaubetrieb ---
+        if self.entity_description.key == "cop":
+            valve_state = self._hub.data.get("vierwegeventil_luft")
+            
+            if str(valve_state) == "Abtaubetrieb":
+                if self._last_valid_cop is not None:
+                    return self._last_valid_cop
+                return val
+
+            if val is not None:
+                self._last_valid_cop = val
+# --- END CHANGE ---
+
+        return val
