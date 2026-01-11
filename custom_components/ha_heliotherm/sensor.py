@@ -57,9 +57,8 @@ class HaHeliothermModbusSensor(SensorEntity):
         self._hub = hub
         self.entity_description: HaHeliothermSensorEntityDescription = description
         
-# --- START CHANGE: Variable für COP Logik ---
+        # Store last valid COP to handle spikes/defrost
         self._last_valid_cop = None
-# --- END CHANGE ---
 
     async def async_added_to_hass(self):
         """Register callbacks."""
@@ -84,23 +83,35 @@ class HaHeliothermModbusSensor(SensorEntity):
     @property
     def native_value(self):
         """Return the state of the sensor."""
-        val = (
+        current_value = (
             self._hub.data[self.entity_description.key]
             if self.entity_description.key in self._hub.data
             else None
         )
 
-# --- START CHANGE: COP einfrieren bei Abtaubetrieb ---
+        # --- COP Filtering Logic ---
         if self.entity_description.key == "cop":
             valve_state = self._hub.data.get("vierwegeventil_luft")
-            
-            if str(valve_state) == "Abtaubetrieb":
+            is_defrost = str(valve_state) == "Abtaubetrieb" or str(valve_state) == "1"
+
+            # 1. Defrost check: freeze last valid value
+            if is_defrost:
                 if self._last_valid_cop is not None:
                     return self._last_valid_cop
-                return val
+                return current_value
 
-            if val is not None:
-                self._last_valid_cop = val
-# --- END CHANGE ---
+            # 2. Spike check: ignore unrealistic values (> 12)
+            try:
+                if current_value is not None and float(current_value) > 12.0:
+                    if self._last_valid_cop is not None:
+                        return self._last_valid_cop
+                    return 0.0
+            except (ValueError, TypeError):
+                pass
 
-        return val
+            # 3. Store valid value
+            if current_value is not None:
+                self._last_valid_cop = current_value
+        # ---------------------------
+
+        return current_value
